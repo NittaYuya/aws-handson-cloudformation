@@ -1,0 +1,264 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  [Stage2 / Day2] クラウドインフラ基礎講座 フォローアップ会 第3回 終了時点の環境。
+  Stage1 に加えて、プライベートサブネット / DB 用 EC2 / NAT ゲートウェイ(+Elastic IP) / プライベート用ルートテーブル を作成します。
+  削除は「スタックの削除」で全リソースが消えます。
+
+Parameters:
+  MyIp:
+    Type: String
+    Description: >-
+      自宅のグローバル IP アドレス。https://checkip.amazonaws.com/ に表示された値をそのまま貼ってください（例: 113.147.224.53）。
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}$'
+    ConstraintDescription: "IPv4 アドレスを xxx.xxx.xxx.xxx の形式で入力してください（/32 は不要）"
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "SSH 接続に使う既存のキーペア名（Web サーバー・DB サーバー共通）"
+    Default: kikagaku-cli-key
+
+  EnableNat:
+    Type: String
+    Description: >-
+      NAT ゲートウェイと Elastic IP を作るか。
+      「true」= 第3回終了時点（NAT あり、時間課金あり）。「false」= 宿題で NAT と EIP を削除した状態（プライベートサブネットは VPC 内通信のみ）。
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: "Amazon Linux 2023 の最新 AMI（変更不要）"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Rules:
+  TokyoRegionOnly:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", "ap-northeast-1"]
+        AssertDescription: "このテンプレートは東京リージョン（ap-northeast-1）専用です。画面右上のリージョンを東京に切り替えてください。"
+
+Conditions:
+  CreateNat: !Equals [!Ref EnableNat, "true"]
+
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks: [W3010]   # AZ の固定は Notion 手順書（1a / 1c）と揃えるための意図的な設定
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "入力が必要な項目" }
+        Parameters: [MyIp, KeyName, EnableNat]
+      - Label: { default: "変更不要" }
+        Parameters: [LatestAmiId]
+    ParameterLabels:
+      MyIp: { default: "自宅のグローバル IP アドレス" }
+      KeyName: { default: "キーペア名" }
+      EnableNat: { default: "NAT ゲートウェイを作る（true）／作らない（false）" }
+
+Resources:
+  # ============================================================
+  # Stage1 と同じ部分（VPC / IGW / パブリックサブネット / Web サーバー）
+  # ============================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-vpc }
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-igw }
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: ap-northeast-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-public-subnet }
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-rtb }
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: kikagaku-cli-sg
+      GroupDescription: Web server security group (SSH/HTTP from my IP)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Sub "${MyIp}/32"
+          Description: SSH from my home IP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Sub "${MyIp}/32"
+          Description: HTTP from my home IP
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-sg }
+
+  WebInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-ec2 }
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash -xe
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+
+  # ============================================================
+  # Day2 で追加する部分（Notion 4 章・5 章）
+  # ============================================================
+
+  # ---------- プライベートサブネット（別 AZ: 1c） ----------
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: ap-northeast-1c
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-private-subnet }
+
+  # ---------- プライベート用ルートテーブル ----------
+  # NAT なしのときは 10.1.0.0/16 local の 1 行だけ（＝閉域）
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-rtb-private }
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ---------- NAT ゲートウェイ（パブリックサブネットに置く）＋ Elastic IP ----------
+  NatEip:
+    Type: AWS::EC2::EIP
+    Condition: CreateNat
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: kikagaku-handson1-ngw-eip }
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNat
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      AllocationId: !GetAtt NatEip.AllocationId
+      ConnectivityType: public
+      Tags:
+        - { Key: Name, Value: kikagaku-handson1-ngw }
+
+  # 0.0.0.0/0 → NAT（この 1 行で「外に出られるプライベート」になる）
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateNat
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # ---------- DB サーバー用セキュリティグループ（SSH はパブリックサブネットからだけ） ----------
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: kikagaku-cli-sg-private
+      GroupDescription: DB server security group (SSH from public subnet only)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.1.1.0/24
+          Description: SSH from public subnet (bastion)
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-sg-private }
+
+  # ---------- DB サーバー（パブリック IP なし） ----------
+  DbInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref DbSecurityGroup
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-ec2-private }
+
+Outputs:
+  WebUrl:
+    Description: "ブラウザでここを開く（http://）"
+    Value: !Sub "http://${WebInstance.PublicIp}/"
+  WebPublicIp:
+    Description: "Web サーバー（踏み台）のパブリック IP"
+    Value: !GetAtt WebInstance.PublicIp
+  DbPrivateIp:
+    Description: "DB サーバーのプライベート IP（踏み台からの ssh 先。停止→起動しても変わりません）"
+    Value: !GetAtt DbInstance.PrivateIp
+  NatPublicIp:
+    Condition: CreateNat
+    Description: "NAT ゲートウェイの Elastic IP（ペアワークで相手の SG に追加してもらう IP）"
+    Value: !Ref NatEip
+  Step1CopyKeyToBastion:
+    Description: "手順1: 自分の PC で実行。.pem を踏み台（Web サーバー）に送る（Notion 4 章）"
+    Value: !Sub "scp -i ${KeyName}.pem ${KeyName}.pem ec2-user@${WebInstance.PublicIp}:/home/ec2-user/"
+  Step2SshToBastion:
+    Description: "手順2: 自分の PC で実行。踏み台に入る"
+    Value: !Sub "ssh -i ${KeyName}.pem ec2-user@${WebInstance.PublicIp}"
+  Step3SshToDb:
+    Description: "手順3: 踏み台の中で実行。DB サーバーに入る（プロンプトが ip-10-1-2-x に変わる）"
+    Value: !Sub "ssh -i ${KeyName}.pem ec2-user@${DbInstance.PrivateIp}"
+  VpcId:
+    Value: !Ref VPC

@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  [Stage1 / Day1] クラウドインフラ基礎講座 フォローアップ会 第2回 終了時点の環境。
+  VPC / パブリックサブネット / IGW / ルートテーブル / セキュリティグループ / EC2(Apache 起動済み) を作成します。
+  削除は「スタックの削除」で全リソースが消えます。
+
+# ------------------------------------------------------------
+# パラメータ（入力は 2 つだけ）
+# ------------------------------------------------------------
+Parameters:
+  MyIp:
+    Type: String
+    Description: >-
+      自宅のグローバル IP アドレス。https://checkip.amazonaws.com/ に表示された値をそのまま貼ってください（例: 113.147.224.53）。
+      SSH(22) と HTTP(80) をこの IP からだけ許可します。
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}$'
+    ConstraintDescription: "IPv4 アドレスを xxx.xxx.xxx.xxx の形式で入力してください（/32 は不要）"
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: >-
+      SSH 接続に使う既存のキーペア名。事前に EC2 コンソール → キーペア → 「キーペアを作成」で作り、
+      ダウンロードされた .pem を保存しておいてください。
+    Default: kikagaku-cli-key
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: "Amazon Linux 2023 の最新 AMI（変更不要）"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+# ------------------------------------------------------------
+# 東京リージョン以外で作成しようとしたらエラーにする
+# ------------------------------------------------------------
+Rules:
+  TokyoRegionOnly:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", "ap-northeast-1"]
+        AssertDescription: "このテンプレートは東京リージョン（ap-northeast-1）専用です。画面右上のリージョンを東京に切り替えてください。"
+
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks: [W3010]   # AZ の固定は Notion 手順書（1a / 1c）と揃えるための意図的な設定
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "入力が必要な項目" }
+        Parameters: [MyIp, KeyName]
+      - Label: { default: "変更不要" }
+        Parameters: [LatestAmiId]
+    ParameterLabels:
+      MyIp: { default: "自宅のグローバル IP アドレス" }
+      KeyName: { default: "キーペア名" }
+
+Resources:
+  # ---------- ① VPC（器） ----------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-vpc }
+
+  # ---------- ② IGW（玄関）を VPC にアタッチ ----------
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-igw }
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ---------- ③ パブリックサブネット（区画） ----------
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: ap-northeast-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-public-subnet }
+
+  # ---------- ④ ルートテーブル（道）0.0.0.0/0 → IGW ----------
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-rtb }
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # ---------- ⑤ セキュリティグループ（警備員） ----------
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: kikagaku-cli-sg
+      GroupDescription: Web server security group (SSH/HTTP from my IP)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Sub "${MyIp}/32"
+          Description: SSH from my home IP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Sub "${MyIp}/32"
+          Description: HTTP from my home IP
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-sg }
+
+  # ---------- ⑥ EC2（Web サーバー）Apache 起動済み ----------
+  WebInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-ec2 }
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash -xe
+          # Notion 3 章「Web サーバーの構築」相当: Apache をインストールして起動・自動起動
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+
+Outputs:
+  WebUrl:
+    Description: "ブラウザでここを開く。「It works!」が出れば成功（http:// であることに注意）"
+    Value: !Sub "http://${WebInstance.PublicIp}/"
+  PublicIp:
+    Description: "Web サーバーのパブリック IP（停止→起動で変わります）"
+    Value: !GetAtt WebInstance.PublicIp
+  PrivateIp:
+    Description: "Web サーバーのプライベート IP（10.1.1.x）"
+    Value: !GetAtt WebInstance.PrivateIp
+  SshCommand:
+    Description: ".pem があるフォルダで実行する SSH コマンド"
+    Value: !Sub "ssh -i ${KeyName}.pem ec2-user@${WebInstance.PublicIp}"
+  VpcId:
+    Value: !Ref VPC
+  PublicSubnetId:
+    Value: !Ref PublicSubnet
+  WebSecurityGroupId:
+    Value: !Ref WebSecurityGroup

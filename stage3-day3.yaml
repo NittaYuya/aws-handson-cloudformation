@@ -1,0 +1,355 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  [Stage3 / Day3] クラウドインフラ基礎講座 フォローアップ会 第4回 終了時点の環境。
+  Stage2 に加えて、DB サーバーに MariaDB（wordpress DB とユーザー作成済み）、
+  Web サーバーに PHP + WordPress（wp-config.php 設定済み）と 演習3 の sample.php を配置します。
+  削除は「スタックの削除」で全リソースが消えます。
+
+Parameters:
+  MyIp:
+    Type: String
+    Description: >-
+      自宅のグローバル IP アドレス。https://checkip.amazonaws.com/ に表示された値をそのまま貼ってください（例: 113.147.224.53）。
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}$'
+    ConstraintDescription: "IPv4 アドレスを xxx.xxx.xxx.xxx の形式で入力してください（/32 は不要）"
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "SSH 接続に使う既存のキーペア名（Web サーバー・DB サーバー共通）"
+    Default: kikagaku-cli-key
+
+  DbRootPassword:
+    Type: String
+    NoEcho: true
+    Description: "MariaDB の root パスワード（Notion 6 章で自分で決めた値に相当。英数字 8〜32 文字）"
+    Default: rootpasswd
+    MinLength: 8
+    MaxLength: 32
+    AllowedPattern: '^[A-Za-z0-9]+$'
+    ConstraintDescription: "英数字 8〜32 文字で入力してください"
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: "Amazon Linux 2023 の最新 AMI（変更不要）"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Rules:
+  TokyoRegionOnly:
+    Assertions:
+      - Assert: !Equals [!Ref "AWS::Region", "ap-northeast-1"]
+        AssertDescription: "このテンプレートは東京リージョン（ap-northeast-1）専用です。画面右上のリージョンを東京に切り替えてください。"
+
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks: [W3010]   # AZ の固定は Notion 手順書（1a / 1c）と揃えるための意図的な設定
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "入力が必要な項目" }
+        Parameters: [MyIp, KeyName, DbRootPassword]
+      - Label: { default: "変更不要" }
+        Parameters: [LatestAmiId]
+    ParameterLabels:
+      MyIp: { default: "自宅のグローバル IP アドレス" }
+      KeyName: { default: "キーペア名" }
+      DbRootPassword: { default: "MariaDB の root パスワード" }
+
+Resources:
+  # ============================================================
+  # ネットワーク（Stage2 と同じ。NAT は必須: DB サーバーが dnf で外に出るため）
+  # ============================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-vpc }
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-igw }
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: ap-northeast-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-public-subnet }
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-rtb }
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: ap-northeast-1c
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-private-subnet }
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-rtb-private }
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: kikagaku-handson1-ngw-eip }
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      AllocationId: !GetAtt NatEip.AllocationId
+      ConnectivityType: public
+      Tags:
+        - { Key: Name, Value: kikagaku-handson1-ngw }
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # ============================================================
+  # セキュリティグループ
+  # ============================================================
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: kikagaku-cli-sg
+      GroupDescription: Web server security group (SSH/HTTP from my IP)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Sub "${MyIp}/32"
+          Description: SSH from my home IP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Sub "${MyIp}/32"
+          Description: HTTP from my home IP
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-sg }
+
+  # Day3 で 3306（MySQL/Aurora）をパブリックサブネットから許可（Notion 6 章）
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: kikagaku-cli-sg-private
+      GroupDescription: DB server security group (SSH and MySQL from public subnet only)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.1.1.0/24
+          Description: SSH from public subnet (bastion)
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.1.1.0/24
+          Description: MySQL/MariaDB from web server
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-sg-private }
+
+  # ============================================================
+  # DB サーバー: MariaDB を入れて wordpress DB / ユーザーを作る（Notion 6 章を非対話で実行）
+  # ============================================================
+  DbInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PrivateRoute          # NAT 経由で dnf が通るようになってから起動
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref DbSecurityGroup
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-ec2-private }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
+          dnf install -y mariadb105-server
+          systemctl enable mariadb
+          systemctl start mariadb
+          # 起動待ち
+          for i in $(seq 1 30); do mysqladmin ping >/dev/null 2>&1 && break; sleep 2; done
+
+          # mysql_secure_installation 相当（root パスワード設定・匿名ユーザー削除・リモート root 禁止・test DB 削除）
+          mysql -u root <<'SQL'
+          DELETE FROM mysql.global_priv WHERE User='';
+          DELETE FROM mysql.global_priv WHERE User='root' AND Host NOT IN ('localhost','127.0.0.1','::1');
+          DROP DATABASE IF EXISTS test;
+          DELETE FROM mysql.db WHERE Db='test' OR Db='test\_%';
+          FLUSH PRIVILEGES;
+          SQL
+          mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${DbRootPassword}';"
+
+          # WordPress 用の DB とユーザー（Notion 6 章と同じ値）
+          mysql -u root -p'${DbRootPassword}' <<'SQL'
+          CREATE DATABASE IF NOT EXISTS wordpress DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci;
+          GRANT ALL ON wordpress.* TO 'wordpress'@'10.1.%' IDENTIFIED BY 'wordpresspasswd';
+          FLUSH PRIVILEGES;
+          SQL
+          echo "DB SETUP DONE"
+
+  # ============================================================
+  # Web サーバー: Apache + PHP + WordPress + sample.php（Notion 7 章・演習3）
+  # ============================================================
+  WebInstance:
+    Type: AWS::EC2::Instance
+    # DB のプライベート IP を GetAtt で参照しているので、DB 作成後に起動される
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+      Tags:
+        - { Key: Name, Value: kikagaku-cli-ec2 }
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash -xe
+            exec > >(tee /var/log/user-data.log | logger -t user-data) 2>&1
+            DBHOST="${DbPrivateIp}"
+
+            # Apache と PHP 関連（Notion 7 章のコマンドと同じ）＋ mysql クライアント
+            dnf install -y httpd wget php-mysqlnd php-fpm php-mysqli php-json php php-devel mariadb105
+            systemctl enable httpd
+            systemctl start httpd
+
+            # WordPress 本体を配置
+            cd /home/ec2-user
+            wget -q https://wordpress.org/latest.tar.gz
+            tar -xzf latest.tar.gz
+            rm -rf /var/www/html/*
+            cp -r wordpress/* /var/www/html/
+
+            # wp-config.php を作成（Notion 7 章の「さあ、始めましょう！」画面で入力する内容を先に書いておく）
+            cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+            sed -i "s/database_name_here/wordpress/" /var/www/html/wp-config.php
+            sed -i "s/username_here/wordpress/" /var/www/html/wp-config.php
+            sed -i "s/password_here/wordpresspasswd/" /var/www/html/wp-config.php
+            sed -i "s/localhost/$DBHOST/" /var/www/html/wp-config.php
+
+            # 演習3 の sample.php（WordPress のミニ版）
+            cat > /var/www/html/sample.php <<'PHPEOF'
+            <?php
+            $host = "__DBHOST__";
+            $user = "wordpress";
+            $pass = "wordpresspasswd";
+            $dbname = "wordpress";
+
+            $conn = new mysqli($host, $user, $pass, $dbname);
+            if ($conn->connect_error) {
+                die("接続失敗: " . $conn->connect_error);
+            }
+
+            $conn->set_charset("utf8mb4");
+
+            echo "✅ 接続成功！<br>";
+
+            // WordPressの投稿データ（タイトル）を5件だけ取得するSQL
+            $result = $conn->query("SELECT ID, post_title FROM wp_posts LIMIT 5;");
+            while ($row = $result->fetch_assoc()) {
+                echo "📝 " . $row['ID'] . ": " . $row['post_title'] . "<br>";
+            }
+
+            $conn->close();
+            ?>
+            PHPEOF
+            sed -i "s/__DBHOST__/$DBHOST/" /var/www/html/sample.php
+
+            # apache ユーザーに所有権を渡して再起動（Notion 7 章）
+            chown -R apache:apache /var/www/html
+            systemctl restart httpd
+
+            # DB が受け付けるまで待つ（最大 10 分）
+            for i in $(seq 1 60); do
+              mysql -h "$DBHOST" -u wordpress -pwordpresspasswd -e "SELECT 1" >/dev/null 2>&1 && break
+              sleep 10
+            done
+            echo "WEB SETUP DONE"
+          - DbPrivateIp: !GetAtt DbInstance.PrivateIp
+
+Outputs:
+  WordPressUrl:
+    Description: "ブラウザでここを開く。WordPress の言語選択画面が出れば成功（DB 情報は設定済みなので、サイト名と管理者を決める画面から始まります）"
+    Value: !Sub "http://${WebInstance.PublicIp}/"
+  SamplePhpUrl:
+    Description: "演習3: 「接続成功！」と記事一覧が出れば、PHP → DB → HTML の流れが動いています"
+    Value: !Sub "http://${WebInstance.PublicIp}/sample.php"
+  WebPublicIp:
+    Description: "Web サーバー（踏み台）のパブリック IP"
+    Value: !GetAtt WebInstance.PublicIp
+  DbPrivateIp:
+    Description: "DB サーバーのプライベート IP（wp-config.php の DB_HOST に設定済み）"
+    Value: !GetAtt DbInstance.PrivateIp
+  NatPublicIp:
+    Description: "NAT ゲートウェイの Elastic IP"
+    Value: !Ref NatEip
+  DbConnectFromWeb:
+    Description: "Web サーバーの中で実行: DB に接続してみる（パスワードは wordpresspasswd）"
+    Value: !Sub "mysql -h ${DbInstance.PrivateIp} -u wordpress -p wordpress"
+  Step1CopyKeyToBastion:
+    Description: "自分の PC で実行。.pem を踏み台に送る"
+    Value: !Sub "scp -i ${KeyName}.pem ${KeyName}.pem ec2-user@${WebInstance.PublicIp}:/home/ec2-user/"
+  Step2SshToBastion:
+    Description: "自分の PC で実行。踏み台に入る"
+    Value: !Sub "ssh -i ${KeyName}.pem ec2-user@${WebInstance.PublicIp}"
+  Step3SshToDb:
+    Description: "踏み台の中で実行。DB サーバーに入る"
+    Value: !Sub "ssh -i ${KeyName}.pem ec2-user@${DbInstance.PrivateIp}"
