@@ -191,6 +191,8 @@ ssh -i kikagaku-cli-key.pem ec2-user@（WebサーバーのパブリックIP）
 
 プロンプトが `ip-10-1-1-x` になれば OK。この窓はこのまま開けておきます。
 
+> CloudShell から ssh したい人は、Day1 の [5-1b](day1.md#5-1b-cloudshell-から-ssh-したい場合pc-から-ssh-できない人向け) のとおり、CloudShell の IP を SG `kikagaku-cli-sg` に足してください。`scp`（5-2）も CloudShell から同じように送れます（鍵は CloudShell にあるので `-i` の指定はそのまま）。
+
 ### 5-2. 鍵を Web サーバーに送る（窓 2）
 
 Web サーバーから DB サーバーに ssh するにも鍵（`.pem`）が要ります。でも今、Web サーバーは鍵を持っていません。PC から送ります。

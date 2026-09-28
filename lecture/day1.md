@@ -360,6 +360,64 @@ ssh -i kikagaku-cli-key.pem ec2-user@（パブリックIP）
 
 **何をしているか**: `ssh` は暗号化された通信でサーバーの操作画面を手元に持ってくるコマンドです。`-i` で秘密鍵を指定し、`ec2-user` は Amazon Linux に最初から居るユーザーです。
 
+### 5-1b. CloudShell から ssh したい場合（PC から ssh できない人向け）
+
+Day1 の設計は「CLI は CloudShell、ssh は自分の PC」です。でも、PC に ssh が入っていない、会社のネットワークが 22 番を止めている、などの理由で **CloudShell から ssh したい**こともあります。
+
+そのまま CloudShell で `ssh -i kikagaku-cli-key.pem ec2-user@（パブリックIP）` を打つと、**タイムアウト**します。
+
+**なぜか**: SG に書いたのは「あなたの PC の IP」（2-3 でメモした値）です。CloudShell は AWS の中で動いている別の環境なので、そこから出ていく通信は**別の IP**を持っています。SG は「どこから来たか」で判定するので、CloudShell からの 22 番は捨てられます。SG が正しく仕事をしている証拠です。
+
+対処は 3 つあります。上から順におすすめです。
+
+**方法 A（おすすめ）: CloudShell の IP を SG に足す**
+
+CloudShell の中で、自分（CloudShell）が外からどう見えているかを調べます。
+
+```bash
+curl -s https://checkip.amazonaws.com
+```
+
+出てきた IP を SG に追加します（`$SG_ID` は 4-2 の変数。消えていたら 7-1 で復元）。
+
+```bash
+CS_IP=$(curl -s https://checkip.amazonaws.com)
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr $CS_IP/32
+```
+
+これで CloudShell から ssh できます。鍵は CloudShell の中にあるので、権限を絞ってから接続します。
+
+```bash
+chmod 600 kikagaku-cli-key.pem
+ssh -i kikagaku-cli-key.pem ec2-user@（パブリックIP）
+```
+
+**注意**: CloudShell の IP は**セッションごとに変わります**。翌日また繋がらなくなったら、もう一度 `curl` して足してください。使い終わったら、そのルールは消しておきます（自分のサーバーに入れる場所を最小にする習慣）。
+
+```bash
+aws ec2 revoke-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr $CS_IP/32
+```
+
+> この方法は「SG のソースは**出発点の IP**」という今日の学びそのものです。PC から繋ぐなら PC の IP、CloudShell から繋ぐなら CloudShell の IP、と考えれば迷いません。
+
+**方法 B: EC2 Instance Connect（ブラウザから ssh）**
+
+EC2 → インスタンスを選択 → 右上「**接続**」→「EC2 Instance Connect」タブ →「接続」で、ブラウザの中にターミナルが開きます。鍵ファイルの扱いが不要で、Amazon Linux 2023 なら最初から使えます。
+
+ただし SG に、Instance Connect サービスの IP 範囲（東京リージョンは `3.112.23.0/29`）からの 22 番を許可しておく必要があります。範囲が変わっていないかは [AWS の IP 範囲一覧](https://ip-ranges.amazonaws.com/ip-ranges.json) の `EC2_INSTANCE_CONNECT` / `ap-northeast-1` で確認できます。
+
+```bash
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 3.112.23.0/29
+```
+
+**方法 C（非推奨）: 0.0.0.0/0 を一時的に開ける**
+
+SSH のソースを `0.0.0.0/0`（全世界）にすれば、どこからでも繋がります。動きますが、**公開から数分で世界中から総当たりが来ます**。鍵認証なので簡単には入られませんが、4-2 で「だから /32 にする」と学んだ直後にやることではありません。
+
+どうしても使うなら「演習の間だけ、終わったら必ず戻す」を条件にしてください。開けたままにした人は、翌週に `sudo journalctl -u sshd | grep "Invalid user" | wc -l` で攻撃の回数を数えてみてください。数千回になっています。
+
+**実務の答え**: SSM Session Manager を使い、22 番自体を開けません。IAM ロールを EC2 に付ける手順が要るので、今日は扱いません（第3回の「実務ではこうなる」で触れます）。
+
 ### 5-2. Apache をインストールして起動する
 
 ここからは **サーバーの中**（プロンプトが `ec2-user@ip-10-1-1-x`）で打ちます。
@@ -468,6 +526,7 @@ exit
 | `InvalidSubnetID.NotFound` など「存在しない」系のエラー | ID の貼り間違い（`vpc-` を subnet の欄に貼った等）／変数が消えた | エラー文の `( )` の中を読む。`echo $SUBNET_ID` で中身を確認。空なら [7-1](#7-1-変数が消えたとき) |
 | `ssh: Permission denied (publickey)` | 鍵の権限が緩い／ユーザー名が違う／別の鍵を指定している | `chmod 600` または `icacls`。ユーザーは `ec2-user`。`-i` のファイル名を確認 |
 | `ssh: connect to host ... Operation timed out` | SG に 22 番がない／自宅 IP が変わった／パブリック IP を間違えている | SG を確認。checkip で IP を再確認して SG を直す。EC2 画面で IP を確認 |
+| **CloudShell から** ssh でタイムアウト | SG のソースが PC の IP になっていて、CloudShell の IP と違う | [5-1b](#5-1b-cloudshell-から-ssh-したい場合pc-から-ssh-できない人向け)。CloudShell で `curl checkip` した IP を /32 で足す。0.0.0.0/0 にはしない |
 | ブラウザで **タイムアウト** | SG に 80 番がない／`https://` で開いている | 経路の問題。6-2 の SG 追加。`http://` で開く |
 | ブラウザで **接続が拒否されました** | httpd が動いていない | サーバー側の問題。`sudo systemctl start httpd`、`sudo lsof -i -n -P` で 80 番の LISTEN を確認 |
 | 昨日は繋がったのに今日は繋がらない | 自宅のグローバル IP が変わった（ルーター再起動、テザリング） | checkip で確認し、SG のソースを新しい IP/32 に更新 |
@@ -539,7 +598,7 @@ echo VPC=$VPC_ID SUBNET=$SUBNET_ID IGW=$IGW_ID RTB=$RTB_ID SG=$SG_ID EC2=$INSTAN
 
 - 作る順番は **VPC → サブネット → IGW → ルートテーブル → SG → EC2**（外側から内側へ）。
 - サブネットが「パブリック」になるのは、**ルートテーブルに 0.0.0.0/0 → IGW の行がある**とき。名前ではなく道で決まる。
-- SG のソースは **自宅IP/32**。全世界（0.0.0.0/0）に 22 番を開けると数分で攻撃が来る。
+- SG のソースは **出発点の IP/32**。PC から繋ぐなら PC の IP、CloudShell から繋ぐなら CloudShell の IP。全世界（0.0.0.0/0）に 22 番を開けると数分で攻撃が来る。
 - **タイムアウト＝経路、拒否＝サーバー**。`sudo lsof -i -n -P` で LISTEN を見れば、サーバー側の準備はすぐ分かる。
 - 今日打ったコマンドを保存しておけば、同じ環境をもう一度作れる。それを 1 ファイルにまとめたものが CloudFormation（[../stage1-day1.yaml](../stage1-day1.yaml)）です。
 

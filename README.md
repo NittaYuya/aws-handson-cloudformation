@@ -236,6 +236,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/kikagaku/aws-handson-cloudfo
 **Q. 停止（stop）して翌日起動したら繋がらなくなりました。**
 パブリック IP は停止→起動で変わります。EC2 コンソールで新しい IP を確認してください。スタックの「出力」タブは作成時の値のままで更新されません。DB サーバーのプライベート IP は変わりません。
 
+**Q. CloudShell から ssh すると「タイムアウト」になります。**
+SG に書いた IP は「あなたの PC」の IP で、CloudShell は AWS の中で動く別の環境なので IP が違うためです。CloudShell で `curl -s https://checkip.amazonaws.com` した IP を SG に `/32` で足してください（セッションごとに変わります）。`0.0.0.0/0` で全開にする方法は、数分で総当たり攻撃が来るので勧めません。詳しくは [lecture/day1.md の 5-1b](lecture/day1.md#5-1b-cloudshell-から-ssh-したい場合pc-から-ssh-できない人向け)。
+
 **Q. 出力の URL を開いても「タイムアウト」になります。**
 自宅 IP が変わった可能性が高いです。checkip で確認し、SG `kikagaku-cli-sg` のソースを新しい IP/32 に直してください。`https://` ではなく `http://` で開いているかも確認してください。
 
