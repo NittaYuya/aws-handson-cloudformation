@@ -28,7 +28,7 @@ AWS のリソースは「VPC の中にサブネット、サブネットの中に
 3. 次の 1 行を貼り付けて Enter
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/NittaYuya/aws-handson-cloudformation/main/scripts/cleanup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/kikagaku/aws-handson-cloudformation/main/scripts/cleanup.sh)
 ```
 
 4. 消す対象の一覧が表示されるので、内容を見て **`yes`** と入力する

@@ -6,7 +6,7 @@
 # 名前に「kikagaku」を含む VPC の中身をまとめて消します。
 #
 # CloudShell での実行（コンソール右上の >_ アイコン）:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/NittaYuya/aws-handson-cloudformation/main/scripts/cleanup.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/kikagaku/aws-handson-cloudformation/main/scripts/cleanup.sh)
 #
 # 確認なしで実行:   YES=1 bash <(curl -fsSL ...)
 # 対象の名前を変更: KEYWORD=kikagaku bash <(curl -fsSL ...)

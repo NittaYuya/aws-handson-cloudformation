@@ -160,7 +160,7 @@ sudo cat /var/log/user-data.log           # stage2 / stage3
 コンソール右上の CloudShell（`>_`）を開き、リージョンが東京であることを確認して、次の 1 行を貼り付けます。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/NittaYuya/aws-handson-cloudformation/main/scripts/cleanup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/kikagaku/aws-handson-cloudformation/main/scripts/cleanup.sh)
 ```
 
 名前に `kikagaku` を含む VPC の中身を上の順番で全部消し（各段階の完了を待ちながら進みます）、`kikagaku-*` のスタックも削除します。実行前に消す対象を一覧表示して `yes` を待つので、内容を見てから確定してください。デフォルト VPC、他の名前の VPC、キーペアには触りません。途中で止まっても、もう一度同じコマンドを実行すれば続きから消えます。
@@ -196,7 +196,7 @@ scripts/deploy.sh 2 113.147.224.53 kikagaku-cli-key false   # stage2 を NAT な
 scripts/delete.sh 1
 
 # 全部消す（CloudShell に貼る。clone していなくてよい）
-bash <(curl -fsSL https://raw.githubusercontent.com/NittaYuya/aws-handson-cloudformation/main/scripts/cleanup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/kikagaku/aws-handson-cloudformation/main/scripts/cleanup.sh)
 ```
 
 `delete.sh` は、スタックの上に手で足したものがあると `DELETE_FAILED` になります。その判断に自信がなければ `cleanup.sh` を使ってください。`cleanup.sh` は `delete.sh` の機能を含んでいるので、消すときは常に `cleanup.sh` で構いません。
