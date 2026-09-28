@@ -59,17 +59,37 @@ icacls "kikagaku-cli-key.pem" /inheritance:r /grant:r "$($env:USERNAME):R"
 1. このリポジトリの `stageN-dayN.yaml` をダウンロードする（ファイル名を開き、右上の「Download raw file」）
 2. AWS コンソール → **CloudFormation** → 「スタックの作成」→「新しいリソースを使用（標準）」
 3. 「テンプレートファイルのアップロード」でダウンロードした YAML を選び、「次へ」
-4. パラメータを入れる
+4. パラメータを入れる。**入力が必要な項目はファイルごとに違います。** 画面には英語のラベルで出ます（日本語にするとコンソールが「????」と表示するため）。
 
-   | 項目 | 入れる値 |
-   |---|---|
-   | スタック名 | `kikagaku-stage1`（stage2 なら `kikagaku-stage2`、stage3 なら `kikagaku-stage3`） |
-   | Home IP address (MyIp) | 1-2 でメモした値（`/32` は付けない） |
-   | Key pair name (KeyName) | `kikagaku-cli-key` |
-   | Create NAT gateway (EnableNat、stage2 のみ) | `true`（第3回終了時点）／`false`（宿題で NAT を消した状態） |
-   | MariaDB root password (DbRootPassword、stage3 のみ) | 任意の英数字 8〜32 文字（初期値 `rootpasswd` のままでも可） |
+   **スタック名**（全ファイル共通）: `kikagaku-stage1` / `kikagaku-stage2` / `kikagaku-stage3` のように、ファイルに合わせて付けてください。
 
-   パラメータの説明文が英語なのは、CloudFormation のコンソールが日本語の説明文を「????」と表示してしまうためです（AWS 側の制約）。日本語の説明はこの README と YAML 内のコメントにあります。
+   ### stage1-day1.yaml（第2回終了時点）: 入力 2 つ
+
+   | 画面のラベル | 意味 | 入れる値 |
+   |---|---|---|
+   | Home IP address (from checkip.amazonaws.com) | 自宅のグローバル IP | 1-2 でメモした値。`/32` は付けない（例 `113.147.224.53`） |
+   | Key pair name | SSH に使うキーペア | 1-1 で作った `kikagaku-cli-key`（プルダウンから選ぶ） |
+   | LatestAmiId | OS のイメージ | **変更不要**（そのまま） |
+
+   ### stage2-day2.yaml（第3回終了時点）: 入力 3 つ
+
+   | 画面のラベル | 意味 | 入れる値 |
+   |---|---|---|
+   | Home IP address (from checkip.amazonaws.com) | 自宅のグローバル IP | stage1 と同じ |
+   | Key pair name | SSH に使うキーペア（Web・DB 共通） | stage1 と同じ |
+   | Create NAT gateway (true / false) | NAT ゲートウェイと Elastic IP を作るか | `true` = 第3回終了時点そのもの（時間課金あり）。`false` = 宿題で NAT と EIP を消した状態 |
+   | LatestAmiId | OS のイメージ | **変更不要** |
+
+   ### stage3-day3.yaml（第4回終了時点）: 入力 3 つ
+
+   | 画面のラベル | 意味 | 入れる値 |
+   |---|---|---|
+   | Home IP address (from checkip.amazonaws.com) | 自宅のグローバル IP | stage1 と同じ |
+   | Key pair name | SSH に使うキーペア（Web・DB 共通） | stage1 と同じ |
+   | MariaDB root password | DB の root パスワード（Notion 6 章で自分で決める値に相当） | 英数字 8〜32 文字。初期値 `rootpasswd` のままでも可。**後で `mysql -u root -p` に使うのでメモ** |
+   | LatestAmiId | OS のイメージ | **変更不要** |
+
+   stage3 に NAT の有無の選択はありません（DB サーバーが MariaDB を取りに外へ出るため、NAT は必ず作ります）。
 
 5. 「次へ」→「次へ」→ 一番下の「送信」
 6. ステータスが **CREATE_COMPLETE** になるまで待つ（stage1 は約 3 分、NAT がある stage2/3 は約 5 分）
