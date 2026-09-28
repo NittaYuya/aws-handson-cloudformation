@@ -9,6 +9,8 @@
 | `stage2-day2.yaml` | **第3回（Notion Day2）終了時点**: 上記 ＋ プライベートサブネット / DB サーバー / NAT ゲートウェイ ＋ Elastic IP | 第3回を欠席し、第4回から参加する人 |
 | `stage3-day3.yaml` | **第4回（Notion Day3）終了時点**: 上記 ＋ MariaDB（wordpress DB 作成済み） / PHP ＋ WordPress / 演習3 の sample.php | 第4回を欠席した人、完成形をもう一度見たい人 |
 
+> **自分の手で作りながら学びたい人へ**: CloudFormation を使わず 1 つずつ作る手順は [lecture/](lecture/README.md)（[day1.md](lecture/day1.md) / [day2.md](lecture/day2.md) / [day3.md](lecture/day3.md)）にあります。各コマンドが何をしているかの説明、詰まったときの表、演習まで、この 3 ファイルだけでハンズオンが完結します。
+
 リソース名・IP アドレス（`kikagaku-cli-vpc`、`10.1.0.0/16`、`10.1.1.0/24`、`10.1.2.0/24` など）は Notion の手順書と同じにしてあるので、作成後にコンソールで見たときに手順書のスクリーンショットと同じ景色になります。
 
 削除は「5. 消す」の手順で、**手で作ったものもテンプレートで作ったものも同じ順番で消えます**。全自動で消したい人向けに `scripts/cleanup.sh` も用意しています。`scripts/` にある 3 つのスクリプトの使い分けは「7.」にまとめています。
