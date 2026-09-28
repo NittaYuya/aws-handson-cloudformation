@@ -64,10 +64,12 @@ icacls "kikagaku-cli-key.pem" /inheritance:r /grant:r "$($env:USERNAME):R"
    | 項目 | 入れる値 |
    |---|---|
    | スタック名 | `kikagaku-stage1`（stage2 なら `kikagaku-stage2`、stage3 なら `kikagaku-stage3`） |
-   | 自宅のグローバル IP アドレス | 1-2 でメモした値（`/32` は付けない） |
-   | キーペア名 | `kikagaku-cli-key` |
-   | NAT ゲートウェイを作る（stage2 のみ） | `true`（第3回終了時点）／`false`（宿題で NAT を消した状態） |
-   | MariaDB の root パスワード（stage3 のみ） | 任意の英数字（初期値 `rootpasswd` のままでも可） |
+   | Home IP address (MyIp) | 1-2 でメモした値（`/32` は付けない） |
+   | Key pair name (KeyName) | `kikagaku-cli-key` |
+   | Create NAT gateway (EnableNat、stage2 のみ) | `true`（第3回終了時点）／`false`（宿題で NAT を消した状態） |
+   | MariaDB root password (DbRootPassword、stage3 のみ) | 任意の英数字 8〜32 文字（初期値 `rootpasswd` のままでも可） |
+
+   パラメータの説明文が英語なのは、CloudFormation のコンソールが日本語の説明文を「????」と表示してしまうためです（AWS 側の制約）。日本語の説明はこの README と YAML 内のコメントにあります。
 
 5. 「次へ」→「次へ」→ 一番下の「送信」
 6. ステータスが **CREATE_COMPLETE** になるまで待つ（stage1 は約 3 分、NAT がある stage2/3 は約 5 分）
@@ -188,6 +190,9 @@ AWS のリソースは「VPC の中にサブネット、サブネットの中に
 
 **Q. 出力の URL を開いても「タイムアウト」になります。**
 自宅 IP が変わった可能性が高いです。checkip で確認し、SG `kikagaku-cli-sg` のソースを新しい IP/32 に直してください。`https://` ではなく `http://` で開いているかも確認してください。
+
+**Q. パラメータ画面の文字が「????」になります。**
+CloudFormation のコンソールは、パラメータの説明文やラベルに日本語があると「????」と表示します（S3 経由でアップロードしても同じです）。そのためテンプレートの説明文は英語にしてあります。リソース定義やタグ、サーバー内で動くスクリプトの日本語は問題なく通ります。
 
 **Q. テンプレートの中身を読みたい。**
 YAML の `Resources:` 以下が、第2回に CLI で打ったコマンド 1 つ 1 つに対応しています（`create-vpc` → `AWS::EC2::VPC`、`create-subnet` → `AWS::EC2::Subnet` …）。コメントも入れてあるので、Notion の手順書と並べて読んでみてください。
