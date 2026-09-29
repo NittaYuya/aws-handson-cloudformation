@@ -73,9 +73,11 @@ Day1 の Web サーバー（`kikagaku-cli-ec2`）が必要です。
 - Day1 を欠席した／消してしまった人は、[../README.md](../README.md) の `stage1-day1.yaml` で 5 分で作れます。
 - 自宅 IP が変わっていたら、SG `kikagaku-cli-sg` の 22 番・80 番のソースを新しい IP/32 に直してください（https://checkip.amazonaws.com/）。
 
-### 2-2. 今日はコンソール中心
+### 2-2. 今日はコンソールで作る
 
-Notion Day2 の手順に合わせ、今日は主に**マネジメントコンソール**（画面）で作ります。Day1 で CLI で作ったものが画面でどう見えるかを確認しながら進めてください。CLI で作りたい人向けに、各節の最後に同じ操作のコマンドも載せています。
+Notion Day2 の手順に合わせ、今日は**マネジメントコンソール**（画面）で作ります。Day1 で CLI で作ったものが画面でどう見えるかを確認しながら進めてください。各節の表が、画面のどの欄に何を入れるかの一覧です。
+
+> Day2 の完成形をコマンド 1 つで作りたい人は、[../README.md](../README.md) の `stage2-day2.yaml` を使ってください。
 
 ### 2-3. ターミナルを 2 つ開く
 
@@ -114,13 +116,6 @@ Notion Day2 の手順に合わせ、今日は主に**マネジメントコンソ
 
 今はこのままにします（DB サーバーはまだ外に出る必要がないため）。6 章で NAT を作ってから、このサブネット専用のルートテーブルを作ります。
 
-> **CLI でやる場合**
-> ```bash
-> VPC_ID=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=kikagaku-cli-vpc --query 'Vpcs[0].VpcId' --output text)
-> PRIV_SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.1.2.0/24 --availability-zone ap-northeast-1c --query 'Subnet.SubnetId' --output text)
-> aws ec2 create-tags --resources $PRIV_SUBNET_ID --tags Key=Name,Value=kikagaku-cli-private-subnet
-> ```
-
 ---
 
 ## 4. DB サーバー（EC2）をプライベートサブネットに置く
@@ -157,18 +152,6 @@ Notion Day2 の手順に合わせ、今日は主に**マネジメントコンソ
 
 - **パブリック IPv4 アドレス が「−」（空）** であること
 - **プライベート IPv4 アドレス が `10.1.2.x`** であること → **メモしてください**（この後ずっと使います）
-
-> **CLI でやる場合**
-> ```bash
-> AMI_ID=$(aws ssm get-parameters --names /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query 'Parameters[0].Value' --output text)
-> SG_PRIV_ID=$(aws ec2 create-security-group --group-name kikagaku-cli-sg-private --description "db server sg" --vpc-id $VPC_ID --query 'GroupId' --output text)
-> aws ec2 authorize-security-group-ingress --group-id $SG_PRIV_ID --protocol tcp --port 22 --cidr 10.1.1.0/24
-> DB_ID=$(aws ec2 run-instances --image-id $AMI_ID --count 1 --instance-type t2.micro --key-name kikagaku-cli-key \
->   --security-group-ids $SG_PRIV_ID --subnet-id $PRIV_SUBNET_ID --no-associate-public-ip-address \
->   --query 'Instances[0].InstanceId' --output text)
-> aws ec2 create-tags --resources $DB_ID --tags Key=Name,Value=kikagaku-cli-ec2-private
-> aws ec2 describe-instances --instance-ids $DB_ID --query 'Reservations[0].Instances[0].[PublicIpAddress,PrivateIpAddress]' --output table
-> ```
 
 ---
 
@@ -300,19 +283,6 @@ VPC → 左メニュー「**ルートテーブル**」→「**ルートテーブ
 0.0.0.0/0      nat-xxxxxxxx      ← それ以外は NAT 経由で外へ
 ```
 
-> **CLI でやる場合**
-> ```bash
-> PUB_SUBNET_ID=$(aws ec2 describe-subnets --filters Name=tag:Name,Values=kikagaku-cli-public-subnet --query 'Subnets[0].SubnetId' --output text)
-> EIP_ALLOC=$(aws ec2 allocate-address --domain vpc --query 'AllocationId' --output text)
-> NAT_ID=$(aws ec2 create-nat-gateway --subnet-id $PUB_SUBNET_ID --allocation-id $EIP_ALLOC --query 'NatGateway.NatGatewayId' --output text)
-> aws ec2 create-tags --resources $NAT_ID --tags Key=Name,Value=kikagaku-handson1-ngw
-> aws ec2 wait nat-gateway-available --nat-gateway-ids $NAT_ID
-> RTB_PRIV_ID=$(aws ec2 create-route-table --vpc-id $VPC_ID --query 'RouteTable.RouteTableId' --output text)
-> aws ec2 create-tags --resources $RTB_PRIV_ID --tags Key=Name,Value=kikagaku-cli-rtb-private
-> aws ec2 create-route --route-table-id $RTB_PRIV_ID --destination-cidr-block 0.0.0.0/0 --nat-gateway-id $NAT_ID
-> aws ec2 associate-route-table --subnet-id $PRIV_SUBNET_ID --route-table-id $RTB_PRIV_ID
-> ```
-
 ### 6-4. 外に出られることを確認する
 
 NAT が「使用可能」になったら、窓 1（DB サーバーの中、`ip-10-1-2-x`）でもう一度:
@@ -363,16 +333,6 @@ curl -v https://info.cern.ch/hypertext/WWW/TheProject.html
 | `curl` が固まる（エラーが出ない） | 経路がない。「固まる＝経路」「拒否＝相手がいない」「タイムアウト＝SG」 | ルートテーブルから疑う |
 | 前回停止した Web サーバーの IP が変わった | 停止→起動で変わる仕様 | EC2 画面で新しい IP を確認。自宅 IP も変わっていないか checkip |
 | 翌月の請求に NAT の課金がある | NAT／Elastic IP の消し忘れ | 9 章の手順で削除・解放 |
-
-**変数が消えたとき**（CLI で進めている人）:
-
-```bash
-VPC_ID=$(aws ec2 describe-vpcs --filters Name=tag:Name,Values=kikagaku-cli-vpc --query 'Vpcs[0].VpcId' --output text)
-PUB_SUBNET_ID=$(aws ec2 describe-subnets --filters Name=tag:Name,Values=kikagaku-cli-public-subnet --query 'Subnets[0].SubnetId' --output text)
-PRIV_SUBNET_ID=$(aws ec2 describe-subnets --filters Name=tag:Name,Values=kikagaku-cli-private-subnet --query 'Subnets[0].SubnetId' --output text)
-NAT_ID=$(aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$VPC_ID Name=state,Values=available --query 'NatGateways[0].NatGatewayId' --output text)
-echo VPC=$VPC_ID PUB=$PUB_SUBNET_ID PRIV=$PRIV_SUBNET_ID NAT=$NAT_ID
-```
 
 ---
 
